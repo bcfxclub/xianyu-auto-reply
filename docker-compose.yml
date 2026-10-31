@@ -1,14 +1,15 @@
 # ==========================================================
 # 闲鱼自动回复系统 (bcfxclub/xianyu-auto-reply) - Unraid 专用
 # 部署方式：Unraid Compose Manager (Add New Compose Stack) -> Project folder
-# 说明：全部使用阿里云预构建镜像，不在本机编译；数据统一落在 appdata
+# 说明：镜像全部由 GitHub Actions 从源码构建 + Docker Hub 官方镜像镜像而来，
+#       存放在你自己的 GHCR（ghcr.io/bcfxclub），不依赖任何第三方私有仓库
 # 数据根目录：/mnt/user/appdata/xianyu-auto-reply
 # ==========================================================
 
 services:
   # ================= 基础设施 =================
   mysql:
-    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-mysql:8.0
+    image: ghcr.io/bcfxclub/xianyu-mysql:8.0
     container_name: xianyu-mysql
     restart: unless-stopped
     environment:
@@ -36,7 +37,7 @@ services:
       start_period: 30s
 
   redis:
-    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-redis:7-alpine
+    image: ghcr.io/bcfxclub/xianyu-redis:7-alpine
     container_name: xianyu-redis
     restart: unless-stopped
     command: >
@@ -60,7 +61,7 @@ services:
 
   # ================= 应用服务 =================
   backend-web:
-    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-backend-web:latest
+    image: ghcr.io/bcfxclub/xianyu-backend-web:latest
     container_name: xianyu-backend-web
     restart: unless-stopped
     environment:
@@ -109,6 +110,10 @@ services:
       - SQL_ECHO=false
       - TOKEN_CACHE_TTL_MIN_HOURS=5
       - TOKEN_CACHE_TTL_MAX_HOURS=10
+      # 断开与作者官方服务器的联动（广告/公告/弹窗），彻底解耦
+      - ENABLE_REMOTE_ADS=false
+      - ENABLE_REMOTE_ANNOUNCEMENTS=false
+      - ENABLE_REMOTE_POPUP_ANNOUNCEMENTS=false
       - TZ=Asia/Shanghai
     volumes:
       - /mnt/user/appdata/xianyu-auto-reply/logs/backend_web:/app/backend-web/logs
@@ -131,7 +136,7 @@ services:
       start_period: 60s
 
   websocket:
-    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-websocket:latest
+    image: ghcr.io/bcfxclub/xianyu-websocket:latest
     container_name: xianyu-websocket
     restart: unless-stopped
     # Playwright / Chromium 需要足够的共享内存，否则易崩溃
@@ -204,7 +209,7 @@ services:
       start_period: 60s
 
   scheduler:
-    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-scheduler:latest
+    image: ghcr.io/bcfxclub/xianyu-scheduler:latest
     container_name: xianyu-scheduler
     restart: unless-stopped
     environment:
@@ -273,7 +278,7 @@ services:
       start_period: 60s
 
   frontend:
-    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-frontend:latest
+    image: ghcr.io/bcfxclub/xianyu-frontend:latest
     container_name: xianyu-frontend
     restart: unless-stopped
     environment:
