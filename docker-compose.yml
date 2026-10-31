@@ -1,128 +1,292 @@
-services:
-  xianyu-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      args:
-        BASE_IMAGE: python:3.11-slim-bookworm
-        HTTP_PROXY: ${HTTP_PROXY}
-        HTTPS_PROXY: ${HTTPS_PROXY}
-        NO_PROXY: ${NO_PROXY}
-        http_proxy: ${HTTP_PROXY}
-        https_proxy: ${HTTPS_PROXY}
-        no_proxy: ${NO_PROXY}
-    image: ghcr.io/gudong2003/xianyu-auto-reply-fix:latest
-    container_name: xianyu-auto-reply-fix
-    restart: unless-stopped
-    # 内置 init 进程回收僵尸进程（chrome 子进程退出后无人 reap 会变 defunct，长期累积）
-    init: true
-    # 使用root用户避免权限问题
-    user: "0:0"
-    # 使用 bash 执行脚本，避免 Windows 行尾格式问题
-    # 即使挂载了 Windows 文件，bash 也能正确处理
-    entrypoint: ["/bin/bash", "-c", "dos2unix /app/entrypoint.sh 2>/dev/null || true; bash /app/entrypoint.sh"]
-    ports:
-      - "9000:8090"
-      - "5900:5900"    # VNC 端口（可选，用于远程查看浏览器）
-      - "6080:6080"    # noVNC Web 端口（浏览器手动接管）
-    volumes:
-      # 数据持久化
-      - ./data:/app/data:rw
-      - ./logs:/app/logs:rw
-      - ./global_config.yml:/app/global_config.yml:ro
-      # 可选：如果需要自定义配置
-      # - ./custom_config.yml:/app/global_config.yml:ro
-      # 可选：备份目录
-      - ./backups:/app/backups:rw
-      # 开发模式：挂载源代码（修改代码后只需重启容器）
-      - .:/app:rw
-    environment:
-      # 启用虚拟显示（有头模式）
-      - USE_XVFB=true           # 启用 Xvfb 虚拟显示
-      - ENABLE_HEADFUL=true     # 启用有头模式
-      - ENABLE_VNC=true         # 启用 VNC 服务器（可选）
-      - DISPLAY=:99             # 虚拟显示编号
-      
-      - PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-1}
-      - PYTHONDONTWRITEBYTECODE=${PYTHONDONTWRITEBYTECODE:-1}
-      - TZ=${TZ:-Asia/Shanghai}
-      - DB_PATH=${DB_PATH:-/app/data/xianyu_data.db}
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - DEBUG=${DEBUG:-false}
-      - RELOAD=${RELOAD:-false}
-      # SQL日志配置（默认启用，可通过环境变量覆盖）
-      - SQL_LOG_ENABLED=${SQL_LOG_ENABLED:-true}
-      - SQL_LOG_LEVEL=${SQL_LOG_LEVEL:-INFO}
-      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-default-secret-key}
-      - SESSION_TIMEOUT=${SESSION_TIMEOUT:-3600}
-      # 多用户系统配置
-      - MULTIUSER_ENABLED=${MULTIUSER_ENABLED:-true}
-      - USER_REGISTRATION_ENABLED=${USER_REGISTRATION_ENABLED:-true}
-      - EMAIL_VERIFICATION_ENABLED=${EMAIL_VERIFICATION_ENABLED:-true}
-      - CAPTCHA_ENABLED=${CAPTCHA_ENABLED:-true}
-      - TOKEN_EXPIRE_TIME=${TOKEN_EXPIRE_TIME:-86400}
-      - AUTO_REPLY_ENABLED=${AUTO_REPLY_ENABLED:-true}
-      - AUTO_DELIVERY_ENABLED=${AUTO_DELIVERY_ENABLED:-true}
-      - AUTO_DELIVERY_TIMEOUT=${AUTO_DELIVERY_TIMEOUT:-30}
-      - API_CARD_TIMEOUT=${API_CARD_TIMEOUT:-10}
-      - BATCH_DATA_LOCK_TIMEOUT=${BATCH_DATA_LOCK_TIMEOUT:-5}
-      # AI回复相关配置
-      - AI_REPLY_ENABLED=${AI_REPLY_ENABLED:-false}
-      - DEFAULT_AI_MODEL=${DEFAULT_AI_MODEL:-qwen-plus}
-      - DEFAULT_AI_BASE_URL=${DEFAULT_AI_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
-      - AI_REQUEST_TIMEOUT=${AI_REQUEST_TIMEOUT:-30}
-      - AI_MAX_TOKENS=${AI_MAX_TOKENS:-100}
-      - WEBSOCKET_URL=${WEBSOCKET_URL:-wss://wss-goofish.dingtalk.com/}
-      - HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-15}
-      - HEARTBEAT_TIMEOUT=${HEARTBEAT_TIMEOUT:-5}
-      - TOKEN_REFRESH_INTERVAL=${TOKEN_REFRESH_INTERVAL:-3600}
-      - TOKEN_RETRY_INTERVAL=${TOKEN_RETRY_INTERVAL:-300}
-      - MESSAGE_EXPIRE_TIME=${MESSAGE_EXPIRE_TIME:-300000}
+# ==========================================================
+# 闲鱼自动回复系统 (bcfxclub/xianyu-auto-reply) - Unraid 专用
+# 部署方式：Unraid Compose Manager (Add New Compose Stack) -> Project folder
+# 说明：全部使用阿里云预构建镜像，不在本机编译；数据统一落在 appdata
+# 数据根目录：/mnt/user/appdata/xianyu-auto-reply
+# ==========================================================
 
+services:
+  # ================= 基础设施 =================
+  mysql:
+    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-mysql:8.0
+    container_name: xianyu-mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=xianyu@2026
+      - MYSQL_DATABASE=xianyu_data
+      - MYSQL_USER=xianyu
+      - MYSQL_PASSWORD=xianyu@2026
+      - TZ=Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max-connections=4000
+      - --max-connect-errors=100000
+      - --max-allowed-packet=256M
+      - --default-time-zone=+08:00
+    volumes:
+      - /mnt/user/appdata/xianyu-auto-reply/mysql:/var/lib/mysql
     networks:
       - xianyu-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-pxianyu@2026"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-redis:7-alpine
+    container_name: xianyu-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --requirepass xianyu@2026
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --appendonly yes
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - /mnt/user/appdata/xianyu-auto-reply/redis:/data
+    networks:
+      - xianyu-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "xianyu@2026", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ================= 应用服务 =================
+  backend-web:
+    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-backend-web:latest
+    container_name: xianyu-backend-web
+    restart: unless-stopped
+    environment:
+      - ENVIRONMENT=production
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=xianyu
+      - MYSQL_PASSWORD=xianyu@2026
+      - MYSQL_DATABASE=xianyu_data
+      - DB_POOL_SIZE=800
+      - DB_MAX_OVERFLOW=60
+      - DB_POOL_TIMEOUT=30
+      - DB_POOL_RECYCLE=1800
+      - DB_POOL_PRE_PING=true
+      - DB_POOL_USE_LIFO=true
+      - DB_CONNECT_TIMEOUT=10
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=xianyu@2026
+      - REDIS_DB=0
+      - REDIS_POOL_SIZE=800
+      - REDIS_SOCKET_TIMEOUT=5
+      - REDIS_SOCKET_CONNECT_TIMEOUT=3
+      - REDIS_SOCKET_KEEPALIVE=true
+      - REDIS_SOCKET_KEEPALIVE_IDLE=60
+      - REDIS_SOCKET_KEEPALIVE_INTERVAL=10
+      - REDIS_SOCKET_KEEPALIVE_COUNT=3
+      - REDIS_HEALTH_CHECK_INTERVAL=30
+      - REDIS_PROTOCOL=2
+      - REDIS_STARTUP_MAX_RETRIES=5
+      - REDIS_STARTUP_RETRY_BASE_DELAY=1
+      - REDIS_STARTUP_RETRY_CAP_DELAY=10
+      - BACKEND_WEB_PORT=8089
+      - HOST=0.0.0.0
+      - JWT_ALGORITHM=HS256
+      - ACCESS_TOKEN_EXPIRE_MINUTES=1440
+      - REFRESH_TOKEN_EXPIRE_MINUTES=10080
+      - CORS_ORIGINS=*
+      - WEBSOCKET_SERVICE_URL=http://websocket:8090
+      - SCHEDULER_SERVICE_URL=http://scheduler:8091
+      - FRONTEND_SERVICE_URL=http://frontend:80
+      - STATIC_DIR=/app/static
+      - BACKUP_DIR=/app/backups
+      - BROWSER_HEADLESS=true
+      - LOG_LEVEL=INFO
+      - SQL_ECHO=false
+      - TOKEN_CACHE_TTL_MIN_HOURS=5
+      - TOKEN_CACHE_TTL_MAX_HOURS=10
+      - TZ=Asia/Shanghai
+    volumes:
+      - /mnt/user/appdata/xianyu-auto-reply/logs/backend_web:/app/backend-web/logs
+      - /mnt/user/appdata/xianyu-auto-reply/static:/app/static
+      - /mnt/user/appdata/xianyu-auto-reply/backups:/app/backups
+    ports:
+      - "8089:8089"
+    networks:
+      - xianyu-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8089/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  websocket:
+    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-websocket:latest
+    container_name: xianyu-websocket
+    restart: unless-stopped
+    # Playwright / Chromium 需要足够的共享内存，否则易崩溃
+    shm_size: "1gb"
+    environment:
+      - ENVIRONMENT=production
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=xianyu
+      - MYSQL_PASSWORD=xianyu@2026
+      - MYSQL_DATABASE=xianyu_data
+      - DB_POOL_SIZE=800
+      - DB_MAX_OVERFLOW=150
+      - DB_POOL_TIMEOUT=30
+      - DB_POOL_RECYCLE=1800
+      - DB_POOL_PRE_PING=true
+      - DB_POOL_USE_LIFO=true
+      - DB_CONNECT_TIMEOUT=10
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=xianyu@2026
+      - REDIS_DB=0
+      - REDIS_POOL_SIZE=800
+      - REDIS_SOCKET_TIMEOUT=5
+      - REDIS_SOCKET_CONNECT_TIMEOUT=3
+      - REDIS_SOCKET_KEEPALIVE=true
+      - REDIS_SOCKET_KEEPALIVE_IDLE=60
+      - REDIS_SOCKET_KEEPALIVE_INTERVAL=10
+      - REDIS_SOCKET_KEEPALIVE_COUNT=3
+      - REDIS_HEALTH_CHECK_INTERVAL=30
+      - REDIS_PROTOCOL=2
+      - REDIS_STARTUP_MAX_RETRIES=5
+      - REDIS_STARTUP_RETRY_BASE_DELAY=1
+      - REDIS_STARTUP_RETRY_CAP_DELAY=10
+      - WEBSOCKET_PORT=8090
+      - HOST=0.0.0.0
+      - MAX_CAPTCHA_CONCURRENT=3
+      - BROWSER_HEADLESS=true
+      - AUTO_START_WEBSOCKET=true
+      - CAPTCHA_DRISSIONPAGE_FALLBACK_ENABLED=false
+      - CAPTCHA_DRISSIONPAGE_TIMEOUT=25
+      - CAPTCHA_DRISSIONPAGE_HEADLESS=true
+      - BACKEND_WEB_SERVICE_URL=http://backend-web:8089
+      - STATIC_DIR=/app/static
+      - LOG_LEVEL=INFO
+      - SQL_ECHO=false
+      - TOKEN_CACHE_TTL_MIN_HOURS=5
+      - TOKEN_CACHE_TTL_MAX_HOURS=10
+      - TZ=Asia/Shanghai
+    volumes:
+      - /mnt/user/appdata/xianyu-auto-reply/logs/websocket:/app/websocket/logs
+      - /mnt/user/appdata/xianyu-auto-reply/static:/app/static
+      - /mnt/user/appdata/xianyu-auto-reply/browser_data:/app/browser_data
+    ports:
+      - "8090:8090"
+    networks:
+      - xianyu-network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend-web:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    # 资源限制
-    deploy:
-      resources:
-        limits:
-          memory: ${MEMORY_LIMIT:-2048}M
-          cpus: '${CPU_LIMIT:-2.0}'
-        reservations:
-          memory: ${MEMORY_RESERVATION:-512}M
-          cpus: '${CPU_RESERVATION:-0.5}'
+      start_period: 60s
 
-  # 可选：添加Nginx反向代理
-  nginx:
-    image: nginx:alpine
-    container_name: xianyu-nginx
+  scheduler:
+    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-scheduler:latest
+    container_name: xianyu-scheduler
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
+    environment:
+      - ENVIRONMENT=production
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=xianyu
+      - MYSQL_PASSWORD=xianyu@2026
+      - MYSQL_DATABASE=xianyu_data
+      - DB_POOL_SIZE=800
+      - DB_MAX_OVERFLOW=30
+      - DB_POOL_TIMEOUT=30
+      - DB_POOL_RECYCLE=1800
+      - DB_POOL_PRE_PING=true
+      - DB_POOL_USE_LIFO=true
+      - DB_CONNECT_TIMEOUT=10
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=xianyu@2026
+      - REDIS_DB=0
+      - REDIS_POOL_SIZE=800
+      - REDIS_SOCKET_TIMEOUT=5
+      - REDIS_SOCKET_CONNECT_TIMEOUT=3
+      - REDIS_SOCKET_KEEPALIVE=true
+      - REDIS_SOCKET_KEEPALIVE_IDLE=60
+      - REDIS_SOCKET_KEEPALIVE_INTERVAL=10
+      - REDIS_SOCKET_KEEPALIVE_COUNT=3
+      - REDIS_HEALTH_CHECK_INTERVAL=30
+      - REDIS_PROTOCOL=2
+      - REDIS_STARTUP_MAX_RETRIES=5
+      - REDIS_STARTUP_RETRY_BASE_DELAY=1
+      - REDIS_STARTUP_RETRY_CAP_DELAY=10
+      - SCHEDULER_PORT=8091
+      - HOST=0.0.0.0
+      - REDELIVERY_INTERVAL=5
+      - RATE_INTERVAL=20
+      - WEBSOCKET_SERVICE_URL=http://websocket:8090
+      - BACKEND_WEB_SERVICE_URL=http://backend-web:8089
+      - STATIC_DIR=/app/static
+      - BACKUP_DIR=/app/backups
+      - LOG_LEVEL=INFO
+      - SQL_ECHO=false
+      - TZ=Asia/Shanghai
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - xianyu-app
+      - /mnt/user/appdata/xianyu-auto-reply/logs/scheduler:/app/scheduler/logs
+      - /mnt/user/appdata/xianyu-auto-reply/static:/app/static
+      - /mnt/user/appdata/xianyu-auto-reply/backups:/app/backups
+    ports:
+      - "8091:8091"
     networks:
       - xianyu-network
-    profiles:
-      - with-nginx
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      websocket:
+        condition: service_healthy
+      backend-web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  frontend:
+    image: registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-frontend:latest
+    container_name: xianyu-frontend
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+    ports:
+      # 只对外暴露这一个端口即可，/api /static /health 由 nginx 反代到 backend-web
+      - "9000:80"
+    networks:
+      - xianyu-network
+    depends_on:
+      backend-web:
+        condition: service_healthy
 
 networks:
   xianyu-network:
     driver: bridge
-
-volumes:
-  xianyu-data:
-    driver: local
-  xianyu-logs:
-    driver: local
