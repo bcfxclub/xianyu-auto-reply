@@ -11,10 +11,12 @@ from __future__ import annotations
 
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.system_setting import SystemSetting
 from common.services.advertisement_types import AD_PRICE_DEFAULTS, parse_ad_price
+from app.services.payment_config_service import PAYMENT_SETTING_DEFAULTS
 from common.services.remote_token_api import (
     TOKEN_REMOTE_SECRET_KEY_SETTING_KEY,
     TOKEN_REMOTE_URL_SETTING_KEY,
@@ -23,6 +25,8 @@ from common.services.token_api_mode import (
     TOKEN_API_MODE_SETTING_KEY,
     normalize_token_api_mode,
 )
+from common.services.registration_policy import REGISTRATION_ENABLED_KEY
+from common.services.system_setting_validation import parse_boolean_setting
 from common.utils.text_utils import escape_xss
 
 # 敏感配置不通过通用系统设置接口返回或修改。
@@ -54,11 +58,13 @@ DEFAULT_AUTH_FOOTER_AD_HTML = "© 2026 划算云服务器 ·<a href=\"http://www
 
 DEFAULT_SYSTEM_SETTINGS: dict[str, tuple[str, str | None]] = {
     **AD_PRICE_DEFAULTS,
+    **PAYMENT_SETTING_DEFAULTS,
     "disclaimer.title": ("免责声明", "系统免责声明标题"),
     "disclaimer.content": (DEFAULT_DISCLAIMER_CONTENT, "系统免责声明正文"),
     "disclaimer.checkbox_text": ("我已阅读并同意以上免责声明", "免责声明勾选提示文案"),
     "disclaimer.agree_button_text": ("同意并继续", "免责声明同意按钮文案"),
     "disclaimer.disagree_button_text": ("不同意", "免责声明不同意按钮文案"),
+    REGISTRATION_ENABLED_KEY: ("false", "是否允许新用户自助注册（关闭后拒绝注册及注册验证码发送、验证）"),
     "login.system_name": ("闲鱼管理系统", "登录页系统名称"),
     "login.system_title": (DEFAULT_LOGIN_SYSTEM_TITLE, "登录页系统标题"),
     "login.system_description": (DEFAULT_LOGIN_SYSTEM_DESCRIPTION, "登录页系统描述"),
@@ -101,7 +107,7 @@ DEFAULT_SYSTEM_SETTINGS: dict[str, tuple[str, str | None]] = {
 
 # 不需要XSS转义的键（布尔值、数字等）
 NO_ESCAPE_KEYS = {
-    "registration_enabled",
+    REGISTRATION_ENABLED_KEY,
     "show_default_login_info",
     "login_captcha_enabled",
     "disclaimer.title",
@@ -127,6 +133,13 @@ NO_ESCAPE_KEYS = {
     "alipay.alipay_public_key",
     "alipay.gateway_url",
     "alipay.notify_url",
+    "payment.channel",
+    "zzcode.pid",
+    "zzcode.key",
+    "zzcode.gateway",
+    "zzcode.notify_url",
+    "zzcode.return_url",
+    "zzcode.pay_types",
     "ad_price.carousel",
     "ad_price.text",
     "ad_price.home_carousel",
@@ -188,21 +201,55 @@ class SystemSettingService:
             )
 
     async def ensure_default_settings(self) -> None:
-        existing_stmt = select(SystemSetting.key).where(SystemSetting.key.in_(tuple(DEFAULT_SYSTEM_SETTINGS.keys())))
-        existing_result = await self.session.execute(existing_stmt)
-        existing_keys = set(existing_result.scalars().all())
+        """幂等补齐缺失默认配置，并处理多个请求首次补齐时的重复键冲突。
 
-        missing_records = [
-            SystemSetting(key=key, value=value, description=description)
-            for key, (value, description) in DEFAULT_SYSTEM_SETTINGS.items()
-            if key not in existing_keys
-        ]
+        Args:
+            无额外参数，使用当前请求的数据库会话。
+        Returns:
+            无返回值；保留已有配置，数据库异常记录后继续抛出。
+        """
+        try:
+            for attempt in range(3):
+                existing_stmt = select(SystemSetting.key).where(
+                    SystemSetting.key.in_(tuple(DEFAULT_SYSTEM_SETTINGS))
+                )
+                existing_result = await self.session.execute(existing_stmt)
+                existing_keys = set(existing_result.scalars().all())
+                missing_records = [
+                    SystemSetting(key=key, value=value, description=description)
+                    for key, (value, description) in DEFAULT_SYSTEM_SETTINGS.items()
+                    if key not in existing_keys
+                ]
+                if not missing_records:
+                    return
 
-        if not missing_records:
-            return
+                try:
+                    # 保存点仅回滚本次补齐，避免已加载的登录用户对象被整体回滚过期。
+                    async with self.session.begin_nested():
+                        self.session.add_all(missing_records)
+                        await self.session.flush()
+                except IntegrityError as exc:
+                    if attempt == 2:
+                        raise
+                    # 保存点已回滚；结束只读事务，下一次查询获取 MySQL 的新快照。
+                    await self.session.commit()
+                    logger.warning(
+                        "默认系统设置补齐遇到并发冲突，将重新查询：attempt={} keys={} exception_type={} exception={}",
+                        attempt + 1, [record.key for record in missing_records],
+                        type(exc).__name__, exc,
+                    )
+                    continue
 
-        self.session.add_all(missing_records)
-        await self.session.commit()
+                await self.session.commit()
+                logger.info("默认系统设置已补齐：keys={}", [record.key for record in missing_records])
+                return
+        except Exception as exc:
+            await self.rollback()
+            logger.opt(exception=exc).error(
+                "补齐默认系统设置失败：exception_type={} exception={}",
+                type(exc).__name__, exc,
+            )
+            raise
 
     async def list_settings(self, include_sensitive: bool = False) -> dict[str, str]:
         await self.ensure_default_settings()
@@ -216,6 +263,10 @@ class SystemSettingService:
             if not include_sensitive and entry.key in SENSITIVE_KEYS:
                 continue
             settings[entry.key] = entry.value
+        # 只规范化本次返回值，保留历史设置记录；各客户端统一读取 true/false。
+        settings[REGISTRATION_ENABLED_KEY] = (
+            "true" if parse_boolean_setting(settings.get(REGISTRATION_ENABLED_KEY)) else "false"
+        )
         password_login_mode = str(settings.get("password_login.mode") or "").strip().lower()
         settings["password_login.mode"] = (
             password_login_mode

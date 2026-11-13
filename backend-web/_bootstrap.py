@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import get_settings
 from app.services.db_backup_log_service import DbBackupLogService
 from common.db.error_messages import get_public_database_error_message
+from common.db.init_database import init_database
 from common.db.redis_client import close_redis_client, initialize_redis_client
 from common.db.session import async_session_maker
 from common.utils.logging_utils import setup_logging
@@ -90,10 +91,14 @@ async def lifespan(app: FastAPI):
     
     # 初始化数据库（创建表、默认数据等）
     try:
-        from common.db.init_database import init_database
         await init_database()
-    except Exception as e:
-        logger.error(f"数据库初始化失败: {e}")
+    except Exception:
+        logger.exception("数据库初始化失败，服务退出")
+        try:
+            await close_redis_client()
+        except Exception:
+            logger.exception("数据库初始化失败后关闭Redis连接失败")
+        raise
 
     # 删除备份日志时会暂存文件，启动时检查进程退出前是否留下未完成的暂存文件。
     try:

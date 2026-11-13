@@ -14,7 +14,7 @@ export function Home() {
   return (
     <div className="min-h-screen bg-slate-50 transition-colors duration-200 dark:bg-slate-900">
       <AuthNavbar />
-      <main className="mx-auto max-w-7xl px-3 pb-10 pt-20 sm:px-6">
+      <main className="mx-auto max-w-[90rem] px-3 pb-10 pt-20 sm:px-6">
         <PublicAdvertisements placement="home" {...advertisements} />
         <HomeContacts />
         <PublicPageFooter />

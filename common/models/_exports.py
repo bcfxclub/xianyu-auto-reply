@@ -8,6 +8,7 @@ from common.models.user import User, UserRole, UserStatus
 from common.models.xy_account import XYAccount
 from common.models.xy_catalog_item import XYCatalogItem
 from common.models.xy_keyword_rule import XYKeywordRule
+from common.models.xy_api_keyword_rule import XYApiKeywordRule
 from common.models.xy_order import XYOrder
 from common.models.card import Card
 from common.models.default_reply import DefaultReply, DefaultReplyRecord
@@ -71,6 +72,9 @@ from common.models.ai_listing_task import AiListingTask, AiListingTaskItem
 from common.models.auto_relist_rule import AutoRelistRule
 from common.models.auto_relist_event import AutoRelistEvent
 from common.models.relist_association_migration import RelistAssociationMigration
+from common.models.scheduled_publish_rule import ScheduledPublishRule
+from common.models.scheduled_publish_record import ScheduledPublishRecord
+from common.models.scheduled_publish_trigger import ScheduledPublishTrigger
 
 __all__ = [
     "User",
@@ -79,6 +83,7 @@ __all__ = [
     "XYAccount",
     "XYCatalogItem",
     "XYKeywordRule",
+    "XYApiKeywordRule",
     "XYOrder",
     "Card",
     "DefaultReply",
@@ -148,4 +153,7 @@ __all__ = [
     "AutoRelistRule",
     "AutoRelistEvent",
     "RelistAssociationMigration",
+    "ScheduledPublishRule",
+    "ScheduledPublishRecord",
+    "ScheduledPublishTrigger",
 ]
