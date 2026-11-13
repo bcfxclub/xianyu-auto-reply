@@ -1,0 +1,22 @@
+name: 同步基础镜像到 ghcr
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/sync-images.yml
+
+permissions:
+  packages: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: imjasonh/setup-crane@v0.4
+      - name: 登录 ghcr
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | crane auth login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: 同步 xianyu-mysql
+        run: crane copy registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-mysql:8.0 ghcr.io/bcfxclub/xianyu-mysql:8.0
+      - name: 同步 xianyu-redis
+        run: crane copy registry.cn-shanghai.aliyuncs.com/zhinian-software/xianyu-redis:7-alpine ghcr.io/bcfxclub/xianyu-redis:7-alpine
