@@ -2,6 +2,8 @@ name: 同步基础镜像到 ghcr
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '23 19 * * *'
   push:
     paths:
       - .github/workflows/sync-images.yml
