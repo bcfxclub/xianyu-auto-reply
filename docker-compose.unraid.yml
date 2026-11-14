@@ -322,9 +322,9 @@ services:
     depends_on:
       backend-web:
         condition: service_healthy
-    # 探针与镜像 Dockerfile 自带的 HEALTHCHECK 一致（该镜像无 curl，用 wget）；节奏对齐远程部署版
+    # 该镜像无 curl，用 wget；且必须用 127.0.0.1 不能用 localhost——wget 会先解析到 IPv6 的 ::1 而 nginx 只听 IPv4，会误报不健康
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/"]
       interval: 30s
       timeout: 5s
       retries: 3
