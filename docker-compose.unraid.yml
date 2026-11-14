@@ -1,7 +1,7 @@
 # Docker Compose 配置文件 - Unraid 部署版（纯镜像）
-# 六个服务全部拉取 ghcr.io/bcfxclub 自有镜像，Tower 本地无需源码、不构建：
+# 七个服务全部拉取 ghcr.io/bcfxclub 自有镜像，Tower 本地无需源码、不构建：
 #   - mysql/redis 由 sync-images 工作流从阿里云仓库同步
-#   - backend-web/websocket/scheduler/frontend 由 build-images 工作流打包（四个应用服务带 pull_policy: always，Up 时自动拉最新）
+#   - backend-web/websocket/scheduler/frontend/remote-token-server 由 build-images 工作流打包（应用服务带 pull_policy: always，Up 时自动拉最新）
 # volumes 为与现有部署一致的 bind 挂载（./xianyu_auto_reply/…），数据原地衔接
 # 用法: Unraid 后台 Compose 中以此文件为 stack 的 compose 内容，配合新版 .env 使用
 
@@ -325,6 +325,33 @@ services:
     # 该镜像无 curl，用 wget；且必须用 127.0.0.1 不能用 localhost——wget 会先解析到 IPv6 的 ::1 而 nginx 只听 IPv4，会误报不健康
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ====== 附加服务 ======
+
+  # Remote Token 中转服务（借大陆出口调用闲鱼 IM Token API 的独立中转，主系统不依赖它；调用需带 X-API-Key 请求头，key 见 .env 的 REMOTE_TOKEN_API_KEY）
+  remote-token-server:
+    image: ghcr.io/bcfxclub/xianyu-remote-token-server:latest
+    pull_policy: always
+    container_name: xianyu-token-server
+    labels:
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
+    restart: unless-stopped
+    environment:
+      - API_KEY=${REMOTE_TOKEN_API_KEY:-}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REQUEST_TIMEOUT=${REQUEST_TIMEOUT:-30}
+      - LISTEN_HOST=0.0.0.0
+      - LISTEN_PORT=8000
+    ports:
+      - "${REMOTE_TOKEN_PORT:-8000}:8000"
+    networks:
+      - xianyu-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
       interval: 30s
       timeout: 5s
       retries: 3
