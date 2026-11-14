@@ -1,9 +1,9 @@
-# Docker Compose 配置文件 - Unraid 部署版（源码构建）
-# 基于仓库根目录 docker-compose.yml 改制，仅改三处：
-#   1. mysql/redis 默认镜像改为 ghcr.io/bcfxclub 自有镜像（仍可被 .env 的 MYSQL_IMAGE/REDIS_IMAGE 覆盖）
-#   2. volumes 改为与现有部署一致的 bind 挂载（./xianyu_auto_reply/…），数据原地衔接
-#   3. 补上 Unraid 图标标签
-# 用法: Unraid 后台 Compose 中以此文件建 stack，源码树置于 stack 目录内
+# Docker Compose 配置文件 - Unraid 部署版（纯镜像）
+# 六个服务全部拉取 ghcr.io/bcfxclub 自有镜像，Tower 本地无需源码、不构建：
+#   - mysql/redis 由 sync-images 工作流从阿里云仓库同步
+#   - backend-web/websocket/scheduler/frontend 由 build-images 工作流打包（四个应用服务带 pull_policy: always，Up 时自动拉最新）
+# volumes 为与现有部署一致的 bind 挂载（./xianyu_auto_reply/…），数据原地衔接
+# 用法: Unraid 后台 Compose 中以此文件为 stack 的 compose 内容，配合新版 .env 使用
 
 services:
   # ====== 基础设施 ======
@@ -69,9 +69,8 @@ services:
 
   # Backend-Web 服务
   backend-web:
-    build:
-      context: .
-      dockerfile: backend-web/Dockerfile
+    image: ghcr.io/bcfxclub/xianyu-backend-web:latest
+    pull_policy: always
     container_name: xianyu-backend-web
     labels:
       - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
@@ -158,9 +157,8 @@ services:
 
   # WebSocket 服务
   websocket:
-    build:
-      context: .
-      dockerfile: websocket/Dockerfile
+    image: ghcr.io/bcfxclub/xianyu-websocket:latest
+    pull_policy: always
     container_name: xianyu-websocket
     labels:
       - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
@@ -235,9 +233,8 @@ services:
 
   # Scheduler 服务
   scheduler:
-    build:
-      context: .
-      dockerfile: scheduler/Dockerfile
+    image: ghcr.io/bcfxclub/xianyu-scheduler:latest
+    pull_policy: always
     container_name: xianyu-scheduler
     labels:
       - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
@@ -310,9 +307,8 @@ services:
 
   # 前端服务
   frontend:
-    build:
-      context: .
-      dockerfile: docker/frontend/Dockerfile
+    image: ghcr.io/bcfxclub/xianyu-frontend:latest
+    pull_policy: always
     container_name: xianyu-frontend
     labels:
       - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
