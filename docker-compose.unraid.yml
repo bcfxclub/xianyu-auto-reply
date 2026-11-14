@@ -73,7 +73,7 @@ services:
     pull_policy: always
     container_name: xianyu-backend-web
     labels:
-      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/backend-web.png"
     restart: unless-stopped
     environment:
       - ENVIRONMENT=production
@@ -161,7 +161,7 @@ services:
     pull_policy: always
     container_name: xianyu-websocket
     labels:
-      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/websocket.png"
     restart: unless-stopped
     environment:
       - ENVIRONMENT=production
@@ -237,7 +237,7 @@ services:
     pull_policy: always
     container_name: xianyu-scheduler
     labels:
-      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/scheduler.png"
     restart: unless-stopped
     environment:
       - ENVIRONMENT=production
