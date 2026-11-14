@@ -338,7 +338,7 @@ services:
     pull_policy: always
     container_name: xianyu-token-server
     labels:
-      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/remote-token-server.png"
     restart: unless-stopped
     environment:
       - API_KEY=${REMOTE_TOKEN_API_KEY:-}
