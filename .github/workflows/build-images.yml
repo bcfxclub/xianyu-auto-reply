@@ -12,6 +12,7 @@ on:
       - 'common/**'
       - 'launcher/**'
       - 'docker/frontend/**'
+      - 'remote-token-server/**'
       - '.github/workflows/build-images.yml'
 
 permissions:
@@ -27,12 +28,19 @@ jobs:
         include:
           - service: backend-web
             dockerfile: backend-web/Dockerfile
+            context: .
           - service: websocket
             dockerfile: websocket/Dockerfile
+            context: .
           - service: scheduler
             dockerfile: scheduler/Dockerfile
+            context: .
           - service: frontend
             dockerfile: docker/frontend/Dockerfile
+            context: .
+          - service: remote-token-server
+            dockerfile: remote-token-server/Dockerfile
+            context: remote-token-server
     steps:
       - name: 拉取源码
         uses: actions/checkout@v4
@@ -50,7 +58,7 @@ jobs:
       - name: 构建并推送 ${{ matrix.service }}
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ghcr.io/bcfxclub/xianyu-${{ matrix.service }}:latest
