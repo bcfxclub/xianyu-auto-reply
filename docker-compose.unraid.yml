@@ -13,7 +13,7 @@ services:
     image: ${MYSQL_IMAGE:-ghcr.io/bcfxclub/xianyu-mysql:8.0}
     container_name: xianyu-mysql
     labels:
-      - "net.unraid.docker.icon=https://img.alicdn.com/imgextra/i1/O1CN01gsgBN61ldERQd2AWA_!!6000000004841-2-tps-522-522.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/mysql.png"
     restart: unless-stopped
     environment:
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-xianyu@2026}
@@ -44,7 +44,7 @@ services:
     image: ${REDIS_IMAGE:-ghcr.io/bcfxclub/xianyu-redis:7-alpine}
     container_name: xianyu-redis
     labels:
-      - "net.unraid.docker.icon=https://img.alicdn.com/imgextra/i1/O1CN01gsgBN61ldERQd2AWA_!!6000000004841-2-tps-522-522.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/redis.png"
     restart: unless-stopped
     command: >
       redis-server
@@ -74,7 +74,7 @@ services:
       dockerfile: backend-web/Dockerfile
     container_name: xianyu-backend-web
     labels:
-      - "net.unraid.docker.icon=https://img.alicdn.com/imgextra/i1/O1CN01gsgBN61ldERQd2AWA_!!6000000004841-2-tps-522-522.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
     restart: unless-stopped
     environment:
       - ENVIRONMENT=production
@@ -163,7 +163,7 @@ services:
       dockerfile: websocket/Dockerfile
     container_name: xianyu-websocket
     labels:
-      - "net.unraid.docker.icon=https://img.alicdn.com/imgextra/i1/O1CN01gsgBN61ldERQd2AWA_!!6000000004841-2-tps-522-522.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
     restart: unless-stopped
     environment:
       - ENVIRONMENT=production
@@ -240,7 +240,7 @@ services:
       dockerfile: scheduler/Dockerfile
     container_name: xianyu-scheduler
     labels:
-      - "net.unraid.docker.icon=https://img.alicdn.com/imgextra/i1/O1CN01gsgBN61ldERQd2AWA_!!6000000004841-2-tps-522-522.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
     restart: unless-stopped
     environment:
       - ENVIRONMENT=production
@@ -315,7 +315,7 @@ services:
       dockerfile: docker/frontend/Dockerfile
     container_name: xianyu-frontend
     labels:
-      - "net.unraid.docker.icon=https://img.alicdn.com/imgextra/i1/O1CN01gsgBN61ldERQd2AWA_!!6000000004841-2-tps-522-522.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
