@@ -311,7 +311,7 @@ services:
     pull_policy: always
     container_name: xianyu-frontend
     labels:
-      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/icon.png"
+      - "net.unraid.docker.icon=https://raw.githubusercontent.com/bcfxclub/xianyu-auto-reply/main/frontend.png"
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
