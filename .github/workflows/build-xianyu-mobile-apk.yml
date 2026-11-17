@@ -36,7 +36,9 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Build release APK
-        run: ./gradlew assembleRelease --no-daemon
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
         working-directory: xianyu-mobile/android
 
       - name: Upload APK
