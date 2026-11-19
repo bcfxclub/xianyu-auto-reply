@@ -220,7 +220,7 @@ export interface NotificationChannel {
 
 // 消息通知相关类型 - 匹配后端接口
 // 后端返回格式: { cookie_id: [ { id, channel_id, enabled, channel_name, ... } ] }
-export type NotifyType = 'chat' | 'delivery' | 'account'
+export type NotifyType = 'chat' | 'delivery' | 'account' | 'monitor'
 
 export interface MessageNotification {
   id: number
@@ -303,6 +303,9 @@ export interface SystemSettings {
   smtp_user?: string
   smtp_password?: string
   smtp_from?: string
+  'auth.email_allowed_suffixes'?: string
+  'auth.email_denied_suffixes'?: string
+  'auth.email_denied_message'?: string
   smtp_use_tls?: boolean
   smtp_use_ssl?: boolean
   // 模块设置
