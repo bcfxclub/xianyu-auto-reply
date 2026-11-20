@@ -26,7 +26,7 @@ WORKDIR /app
 
 # 系统基础包：三个服务保持完全一致的命令，这层才能跨镜像复用
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl ca-certificates \
+        curl ca-certificates libatomic1 \
         fonts-dejavu-core fonts-liberation \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
