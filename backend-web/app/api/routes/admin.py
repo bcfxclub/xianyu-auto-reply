@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -23,20 +22,15 @@ from common.models.scheduled_polish_log import ScheduledPolishLog
 from common.models.scheduled_red_flower_log import ScheduledRedFlowerLog
 from common.models.scheduled_login_renew_log import ScheduledLoginRenewLog
 from common.models.scheduled_close_notice_log import ScheduledCloseNoticeLog
-from common.models.user import User, UserRole, UserStatus
-from common.models.user_setting import UserSetting
+from common.models.user import User
 from common.models.xy_account import XYAccount
 from common.models.xy_catalog_item import XYCatalogItem
 from common.models.xy_keyword_rule import XYKeywordRule
 from common.models.xy_order import XYOrder
 from common.models.agent_order import AgentOrder
 from common.schemas.common import ApiResponse
-from common.schemas.user import AdminUserCreate, AdminUserUpdate
 from app.services.dashboard_stats_service import DashboardStatsService
 from app.services.scheduled_batch_log_service import ScheduledBatchLogService
-from app.services.user_service import UserService
-from app.services.recharge_service import RechargeService
-from common.services.settlement_service import BALANCE_KEY
 
 from common.utils.time_utils import get_beijing_now_naive, safe_isoformat
 router = APIRouter(tags=["admin"])
@@ -64,225 +58,6 @@ LEGACY_TABLE_ALIASES = {
     "risk_control_logs": "xy_risk_control_logs",
     "account_login_logs": "xy_account_login_logs",
 }
-
-
-def _format_balance(val: str | None) -> str:
-    """将余额原始值（xy_user_settings 中的字符串）格式化为两位小数字符串。
-
-    取不到 / 解析失败一律视为 0.00，避免前端展示异常。
-    """
-    if val is None:
-        return "0.00"
-    try:
-        return f"{Decimal(str(val)):.2f}"
-    except (InvalidOperation, ValueError):
-        return "0.00"
-
-
-async def _fetch_user_balances(session: AsyncSession, user_ids: list[int]) -> dict[int, str]:
-    """批量查询用户余额（存于 xy_user_settings，key=balance）。
-
-    Args:
-        session: 数据库会话
-        user_ids: 用户ID列表
-
-    Returns:
-        {user_id: 余额原始字符串}，无记录的用户不在结果中
-    """
-    if not user_ids:
-        return {}
-    stmt = select(UserSetting.user_id, UserSetting.value).where(
-        UserSetting.key == BALANCE_KEY,
-        UserSetting.user_id.in_(user_ids),
-    )
-    return {uid: val for uid, val in (await session.execute(stmt)).all()}
-
-
-def _build_user_payload(
-    user: User,
-    cookie_counts: dict[int, int] | None = None,
-    balances: dict[int, str] | None = None,
-) -> dict:
-    counts = cookie_counts or {}
-    balance_map = balances or {}
-    return {
-        "id": user.id,
-        "username": user.username,
-        "email": user.email,
-        "phone": user.phone,
-        "role": user.role.value if user.role else None,
-        "status": user.status.value if user.status else None,
-        "is_admin": user.role == UserRole.ADMIN,
-        "account_limit": user.account_limit,
-        "cookie_count": counts.get(user.id, 0),
-        "card_count": 0,
-        "balance": _format_balance(balance_map.get(user.id)),
-        "expire_at": safe_isoformat(user.expire_at),
-    }
-
-
-@router.get("/users")
-async def list_users(
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0),
-    username: str | None = Query(default=None, description="用户名筛选（模糊匹配，忽略大小写）"),
-    _: User = Depends(deps.get_current_admin_user),
-    session: AsyncSession = Depends(deps.get_db_session),
-) -> dict:
-    # 构建用户名筛选条件，同时作用于总数统计与分页查询，保证翻页数据一致
-    username_keyword = username.strip() if username else None
-
-    # 获取总数
-    total_stmt = select(func.count()).select_from(User)
-    if username_keyword:
-        total_stmt = total_stmt.where(User.username.ilike(f"%{username_keyword}%"))
-    total_result = await session.execute(total_stmt)
-    total = total_result.scalar() or 0
-
-    # 分页查询用户
-    users_stmt = select(User).order_by(User.created_at.desc())
-    if username_keyword:
-        users_stmt = users_stmt.where(User.username.ilike(f"%{username_keyword}%"))
-    users_stmt = users_stmt.limit(limit).offset(offset)
-    users_result = await session.execute(users_stmt)
-    users = users_result.scalars().all()
-
-    cookie_counts_stmt = select(XYAccount.owner_id, func.count()).group_by(XYAccount.owner_id)
-    cookie_counts = {
-        owner_id: count
-        for owner_id, count in (await session.execute(cookie_counts_stmt)).all()
-    }
-
-    # 批量查询当前页用户的余额，避免逐行查询
-    balances = await _fetch_user_balances(session, [user.id for user in users])
-
-    payload = [_build_user_payload(user, cookie_counts, balances) for user in users]
-    return {"users": payload, "success": True, "total": total, "limit": limit, "offset": offset}
-
-
-@router.post("/users", response_model=ApiResponse)
-async def create_user(
-    payload: AdminUserCreate,
-    _: User = Depends(deps.get_current_admin_user),
-    session: AsyncSession = Depends(deps.get_db_session),
-    user_service: UserService = Depends(deps.get_user_service),
-) -> ApiResponse:
-    existing_user = await user_service.get_by_username(payload.username)
-    if existing_user:
-        return ApiResponse(success=False, message="用户名已存在")
-
-    existing_email = await user_service.get_by_email(payload.email)
-    if existing_email:
-        return ApiResponse(success=False, message="邮箱已存在")
-
-    try:
-        user = await user_service.create_admin_user(payload)
-    except Exception as exc:
-        await session.rollback()
-        return ApiResponse(success=False, message=f"创建用户失败: {str(exc)}")
-
-    return ApiResponse(success=True, message="用户创建成功", data={"user": _build_user_payload(user)})
-
-
-@router.put("/users/{user_id}", response_model=ApiResponse)
-async def update_user(
-    user_id: int,
-    payload: AdminUserUpdate,
-    current_admin: User = Depends(deps.get_current_admin_user),
-    session: AsyncSession = Depends(deps.get_db_session),
-    user_service: UserService = Depends(deps.get_user_service),
-) -> ApiResponse:
-    update_data = payload.model_dump(exclude_unset=True)
-    if not update_data:
-        return ApiResponse(success=False, message="请至少填写一个修改项")
-
-    user = await user_service.get(user_id)
-    if not user:
-        return ApiResponse(success=False, message="用户不存在")
-
-    if current_admin.id == user_id and payload.role is not None and payload.role != UserRole.ADMIN:
-        return ApiResponse(success=False, message="当前登录管理员不能取消自己的管理员权限")
-
-    if current_admin.id == user_id and payload.status is not None and payload.status != UserStatus.ACTIVE:
-        return ApiResponse(success=False, message="当前登录管理员不能停用自己")
-
-    if payload.username and payload.username != user.username:
-        existing_user = await user_service.get_by_username(payload.username)
-        if existing_user and existing_user.id != user_id:
-            return ApiResponse(success=False, message="用户名已存在")
-
-    if payload.email and payload.email != user.email:
-        existing_email = await user_service.get_by_email(payload.email)
-        if existing_email and existing_email.id != user_id:
-            return ApiResponse(success=False, message="邮箱已存在")
-
-    try:
-        updated_user = await user_service.update_admin_user(user, payload)
-    except Exception as exc:
-        await session.rollback()
-        return ApiResponse(success=False, message=f"更新用户失败: {str(exc)}")
-
-    balances = await _fetch_user_balances(session, [updated_user.id])
-    return ApiResponse(success=True, message="用户更新成功", data={"user": _build_user_payload(updated_user, balances=balances)})
-
-
-class AdminRechargeRequest(BaseModel):
-    """管理员手动调整用户余额请求"""
-    amount: str = Field(..., description="调整金额，正数为充值，负数为扣减，例如：10.00 或 -5.00")
-    remark: str = Field(default="", description="备注（可选）")
-
-
-@router.post("/users/{user_id}/recharge", response_model=ApiResponse)
-async def recharge_user(
-    user_id: int,
-    payload: AdminRechargeRequest,
-    current_admin: User = Depends(deps.get_current_admin_user),
-    session: AsyncSession = Depends(deps.get_db_session),
-    user_service: UserService = Depends(deps.get_user_service),
-) -> ApiResponse:
-    """管理员手动调整指定用户余额（正数充值 / 负数扣减）
-
-    余额调整与流水写入在 RechargeService.manual_recharge 内加行锁防并发，
-    并在 service 内部 commit，路由层不重复 commit。
-    """
-    user = await user_service.get(user_id)
-    if not user:
-        return ApiResponse(success=False, message="用户不存在")
-
-    service = RechargeService(session)
-    result = await service.manual_recharge(
-        admin_user_id=current_admin.id,
-        target_user_id=user_id,
-        amount=payload.amount,
-        remark=payload.remark,
-    )
-    if not result.get("success"):
-        return ApiResponse(success=False, message=result.get("message", "余额调整失败"))
-    return ApiResponse(success=True, message=result.get("message", "余额调整成功"), data=result.get("data"))
-
-
-@router.delete("/users/{user_id}", response_model=ApiResponse)
-async def delete_user(
-    user_id: int,
-    current_admin: User = Depends(deps.get_current_admin_user),
-    session: AsyncSession = Depends(deps.get_db_session),
-    user_service: UserService = Depends(deps.get_user_service),
-) -> ApiResponse:
-    if user_id == current_admin.id:
-        return ApiResponse(success=False, message="不能停用当前管理员账号")
-
-    user = await user_service.get(user_id)
-    if not user:
-        return ApiResponse(success=False, message="用户不存在")
-
-    try:
-        user.status = UserStatus.INACTIVE
-        await session.commit()
-    except Exception as exc:
-        await session.rollback()
-        return ApiResponse(success=False, message=f"停用用户失败: {str(exc)}")
-
-    return ApiResponse(success=True, message="用户已停用")
 
 
 @router.delete("/risk-control-logs", response_model=ApiResponse)
@@ -412,12 +187,13 @@ async def get_system_logs(
     if not log_dir.exists():
         return {"success": False, "message": "日志目录不存在", "logs": [], "total": 0}
  
-    # 普通日志已经包含 ERROR 及以上级别；error.log 是其副本，聚合展示时排除，避免同一条错误重复出现。
+    # 排除旧错误文件及项目专属错误副本（含滚动文件），避免同一错误重复展示。
     log_files = sorted(
         (
             log_file
             for log_file in log_dir.glob("*.log")
             if log_file.name != "error.log" and not log_file.name.startswith("error.")
+            and not log_file.name.endswith("_error.log") and "_error." not in log_file.name
         ),
         key=lambda item: item.stat().st_mtime,
     )
@@ -725,201 +501,6 @@ async def get_rate_batch_detail(
         "success": True,
         "data": data,
     }
-
-
-# ==================== 定时任务管理接口 ====================
-
-async def _notify_scheduler_reload() -> bool:
-    """
-    通知Scheduler服务重新加载任务配置
-    
-    Returns:
-        是否成功
-    """
-    from app.core.http_client import get_http_client
-    from app.core.config import get_settings
-    from loguru import logger
-    
-    try:
-        settings = get_settings()
-        http_client = get_http_client()
-        url = f"{settings.scheduler_service_url}/internal/tasks/reload"
-        
-        response = await http_client.post(url)
-        
-        if response.get("success"):
-            logger.info("[定时任务配置] 已通知Scheduler服务重新加载配置")
-            return True
-        else:
-            logger.warning(f"[定时任务配置] 通知Scheduler服务失败: {response.get('message')}")
-            return False
-    except Exception as e:
-        logger.error(f"[定时任务配置] 通知Scheduler服务异常: {e}")
-        return False
-
-
-@router.get("/scheduled-tasks")
-async def list_scheduled_tasks(
-    _: User = Depends(deps.get_current_admin_user),
-    session: AsyncSession = Depends(deps.get_db_session),
-) -> dict:
-    """获取定时任务列表（管理员专用）"""
-    from common.models.scheduled_task import ScheduledTask
-    from loguru import logger
-    
-    try:
-        # 直接查询数据库获取任务列表
-        stmt = select(ScheduledTask).order_by(ScheduledTask.id)
-        result = await session.execute(stmt)
-        tasks = result.scalars().all()
-        
-        tasks_data = []
-        for task in tasks:
-            tasks_data.append({
-                "id": task.id,
-                "task_code": task.task_code,
-                "task_name": task.task_name,
-                "interval_seconds": task.interval_seconds,
-                "enabled": task.enabled,
-                "description": task.description,
-                "created_at": safe_isoformat(task.created_at),
-                "updated_at": safe_isoformat(task.updated_at),
-            })
-        
-        return {
-            "success": True,
-            "message": "查询成功",
-            "data": tasks_data,
-        }
-    except Exception as e:
-        logger.error(f"[定时任务配置] 查询任务配置失败: {e}")
-        return {
-            "success": False,
-            "message": f"查询任务配置失败: {str(e)}",
-            "data": None,
-        }
-
-
-@router.put("/scheduled-tasks/{task_code}")
-async def update_scheduled_task(
-    task_code: str,
-    interval_seconds: int | None = None,
-    enabled: bool | None = None,
-    _: User = Depends(deps.get_current_admin_user),
-    session: AsyncSession = Depends(deps.get_db_session),
-) -> dict:
-    """更新定时任务配置（管理员专用）"""
-    from common.models.scheduled_task import ScheduledTask
-    from loguru import logger
-    from app.core.http_client import get_http_client
-    from app.core.config import get_settings
-    
-    settings = get_settings()
-    
-    try:
-        # 查询任务
-        stmt = select(ScheduledTask).where(ScheduledTask.task_code == task_code)
-        result = await session.execute(stmt)
-        task = result.scalar_one_or_none()
-        
-        if not task:
-            return {
-                "success": False,
-                "message": f"任务不存在: {task_code}",
-                "data": None,
-            }
-        
-        # 更新字段
-        if interval_seconds is not None:
-            if interval_seconds < 1:
-                return {
-                    "success": False,
-                    "message": "执行间隔不能小于1秒",
-                    "data": None,
-                }
-            task.interval_seconds = interval_seconds
-        
-        if enabled is not None:
-            task.enabled = enabled
-        
-        await session.commit()
-        await session.refresh(task)
-        
-        logger.info(
-            f"[定时任务配置] 任务配置已更新: {task_code}, "
-            f"间隔={task.interval_seconds}秒, 启用={task.enabled}"
-        )
-        
-        # 通知Scheduler服务重新加载配置
-        reload_success = False
-        try:
-            http_client = get_http_client()
-            url = f"{settings.scheduler_service_url}/internal/tasks/reload"
-            response = await http_client.post(url)
-            if response.get("success"):
-                reload_success = True
-                logger.info(f"[定时任务配置] 已通知Scheduler服务重新加载配置: {task_code}")
-            else:
-                logger.warning(f"[定时任务配置] 通知Scheduler服务失败: {response.get('message')}")
-        except Exception as e:
-            logger.error(f"[定时任务配置] 通知Scheduler服务异常: {e}")
-        
-        return {
-            "success": True,
-            "message": "更新成功" + ("，已通知调度器刷新配置" if reload_success else ""),
-            "data": {
-                "id": task.id,
-                "task_code": task.task_code,
-                "task_name": task.task_name,
-                "interval_seconds": task.interval_seconds,
-                "enabled": task.enabled,
-                "description": task.description,
-            },
-        }
-    except Exception as e:
-        logger.error(f"[定时任务配置] 更新任务配置失败: {e}")
-        await session.rollback()
-        return {
-            "success": False,
-            "message": f"更新任务配置失败: {str(e)}",
-            "data": None,
-        }
-
-
-@router.post("/scheduled-tasks/{task_code}/trigger")
-async def trigger_scheduled_task(
-    task_code: str,
-    _: User = Depends(deps.get_current_admin_user),
-) -> dict:
-    """手动触发定时任务执行（管理员专用）"""
-    from loguru import logger
-    from app.core.http_client import get_http_client
-    from app.core.config import get_settings
-    
-    settings = get_settings()
-    
-    try:
-        http_client = get_http_client()
-        url = f"{settings.scheduler_service_url}/internal/tasks/{task_code}/trigger"
-        response = await http_client.post(url)
-        
-        if response.get("success"):
-            logger.info(f"[定时任务] 手动触发任务成功: {task_code}")
-            return {
-                "success": True,
-                "message": response.get("message", f"任务 {task_code} 已触发执行"),
-            }
-        else:
-            return {
-                "success": False,
-                "message": response.get("message", "触发任务失败"),
-            }
-    except Exception as e:
-        logger.error(f"[定时任务] 手动触发任务异常: {e}")
-        return {
-            "success": False,
-            "message": f"触发任务失败: {str(e)}",
-        }
 
 
 # ==================== 定时擦亮日志接口 ====================
